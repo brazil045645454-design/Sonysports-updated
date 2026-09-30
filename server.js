@@ -2,7 +2,7 @@ const express = require("express");
 
 const app = express();
 
-// Render terminates HTTPS at its edge proxy.
+// Required for Render HTTPS
 app.set("trust proxy", true);
 
 const PORT = Number(process.env.PORT || 7860);
@@ -17,13 +17,14 @@ const CHANNEL_NAME = "Sony Sports";
 const STREAM_TITLE = "ENG | Day 12 - 30 Sep 2026";
 
 const UPSTREAM_HEADERS = {
-  "Referer": "https://www.sonyliv.com/",
-  "Origin": "https://www.sonyliv.com",
+  Referer: "https://www.sonyliv.com/",
+  Origin: "https://www.sonyliv.com",
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 };
 
 let upstream;
+
 try {
   upstream = new URL(STREAM_URL);
 } catch {
@@ -50,13 +51,13 @@ function proxyUrlFor(upstreamUrl, req) {
       ? forwardedProto
       : req.protocol;
 
-  return `${protocol}://${req.get("host")}/hls-proxy?url=${encodeURIComponent(
-    upstreamUrl
-  )}`;
+  return `${protocol}://${req.get(
+    "host"
+  )}/hls-proxy?url=${encodeURIComponent(upstreamUrl)}`;
 }
 
 function rewritePlaylist(text, responseUrl, req) {
-  // Rewrite URI="..." attributes such as EXT-X-KEY and EXT-X-MAP.
+  // Rewrite URI="..." attributes such as EXT-X-KEY and EXT-X-MAP
   text = text.replace(/URI="([^"]+)"/g, (_, uri) => {
     try {
       const absolute = new URL(uri, responseUrl).toString();
@@ -68,7 +69,7 @@ function rewritePlaylist(text, responseUrl, req) {
     }
   });
 
-  // Rewrite normal HLS playlist URLs.
+  // Rewrite normal HLS URLs
   return text
     .split(/\r?\n/)
     .map((line) => {
@@ -97,7 +98,7 @@ async function fetchUpstream(url, req) {
     ...UPSTREAM_HEADERS
   };
 
-  // Forward Range requests from Stremio/player.
+  // Forward Range requests from the player
   const range = req?.get?.("range");
 
   if (range) {
@@ -121,7 +122,7 @@ async function fetchUpstream(url, req) {
 
 const manifest = {
   id: "community.sonysports.live",
-  version: "2.0.0",
+  version: "3.0.0",
   name: CHANNEL_NAME,
   description: "Sony Sports live channel",
   resources: ["catalog", "meta", "stream"],
@@ -185,7 +186,12 @@ app.get("/meta/tv/:id.json", (req, res) => {
   );
 });
 
-// Stremio stream endpoint.
+/*
+ * IMPORTANT:
+ *
+ * Stremio gets the ORIGINAL Sony m3u8 URL here.
+ * The required Sony headers are supplied through proxyHeaders.
+ */
 app.get("/stream/tv/:id.json", (req, res) => {
   res.set("Cache-Control", "no-store");
 
@@ -195,24 +201,37 @@ app.get("/stream/tv/:id.json", (req, res) => {
     });
   }
 
-  const proxyStreamUrl = proxyUrlFor(STREAM_URL, req);
-
   res.json({
     streams: [
       {
         name: CHANNEL_NAME,
         title: STREAM_TITLE,
-        url: proxyStreamUrl,
+
+        // Original Sony HLS URL
+        url: STREAM_URL,
 
         behaviorHints: {
-          notWebReady: true
+          notWebReady: true,
+
+          proxyHeaders: {
+            request: {
+              Referer: "https://www.sonyliv.com/",
+              Origin: "https://www.sonyliv.com",
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+            }
+          }
         }
       }
     ]
   });
 });
 
-// Server-side HLS proxy.
+/*
+ * Server-side HLS proxy.
+ *
+ * This remains available as a fallback/test endpoint.
+ */
 app.get("/hls-proxy", async (req, res) => {
   try {
     if (typeof req.query.url !== "string") {
@@ -252,7 +271,7 @@ app.get("/hls-proxy", async (req, res) => {
       contentType.includes("mpegurl") ||
       target.pathname.toLowerCase().endsWith(".m3u8");
 
-    // HLS playlist
+    // Playlist
     if (looksLikePlaylist) {
       const text = await upstreamResponse.text();
 
@@ -272,7 +291,7 @@ app.get("/hls-proxy", async (req, res) => {
       return res.send(rewritten);
     }
 
-    // Media segments / keys / audio / video.
+    // Media segments / keys / audio / video
     if (contentType) {
       res.set("Content-Type", contentType);
     }
@@ -300,7 +319,6 @@ app.get("/hls-proxy", async (req, res) => {
       return res.end();
     }
 
-    // Stream data instead of buffering the entire segment.
     const reader =
       upstreamResponse.body.getReader();
 
@@ -309,9 +327,7 @@ app.get("/hls-proxy", async (req, res) => {
         const { value, done } =
           await reader.read();
 
-        if (done) {
-          break;
-        }
+        if (done) break;
 
         if (value) {
           res.write(Buffer.from(value));
@@ -345,7 +361,7 @@ app.get("/hls-proxy", async (req, res) => {
   }
 });
 
-// Direct upstream test.
+// Test whether Render can fetch the Sony stream
 app.get("/test-stream", async (req, res) => {
   try {
     const upstreamResponse =
@@ -389,7 +405,7 @@ app.get("/test-stream", async (req, res) => {
   }
 });
 
-// Health check.
+// Health
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
@@ -399,12 +415,14 @@ app.get("/health", (req, res) => {
   });
 });
 
+// 404
 app.use((req, res) => {
   res.status(404).json({
     error: "Not found"
   });
 });
 
+// Error handler
 app.use((err, req, res, next) => {
   console.error(err);
 
@@ -426,3 +444,7 @@ app.listen(
     );
   }
 );
+      
+ 
+
+
